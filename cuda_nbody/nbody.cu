@@ -54,68 +54,57 @@ __global__ void iterate(const int num_particles, const int num_iterations, const
 {
   // Use shared memory. There is only one "extern".
   // You need to divide it up yourself
-  extern __shared__ float3 sharedmem[];
-  float3 *localparticles = sharedmem;
-  float3 *localvelocities = &sharedmem[blockDim.x];
-  float3 *localforces = &sharedmem[2*blockDim.x];
+  extern __shared__ float3 localparticles[];
 
-  // Get the index the shared data
+  float3 my_position;
+  float3 my_acceleration;
+
+  // Get the index in the shared data
   int sid = threadIdx.x;
 
-  // Get the index the global data
+  // Get the index in the global data
   int gid = blockIdx.x * blockDim.x + threadIdx.x;
 
+  my_position = particles[gid];
+  my_acceleration = {0, 0, 0};
+
   // Copy the global memory to the shared memory of the block
-  if(gid < num_particles)
+  int num_blocks = (num_particles + blockDim.x - 1) / blockDim.x;
+  for(int i = 0; i < num_blocks; i++)
   {
-    localparticles[sid].x = particles[gid].x;
-    localparticles[sid].y = particles[gid].y;
-    localparticles[sid].z = particles[gid].z;
-    localvelocities[sid].x = velocities[gid].x;
-    localvelocities[sid].y = velocities[gid].y;
-    localvelocities[sid].z = velocities[gid].z;
-  }
+    // Load the i-th tile into shared memory for all the blocks
+    localparticles[sid] = particles[sid + i*blockDim.x];
+    
+    // Wait until all threads have copied the data
+    __syncthreads();
 
-  // Wait until all threads have copied the data
-  __syncthreads();
-
-  // Do some physics
-  
-  if(gid < num_particles)
-  {
-    for(int j = 0; j < num_iterations; j++)
+    // Calculate the force on my particle from all the other particles in the i-th block
+    for(int j = 0; j < blockDim.x; j++)
     {
-      for(int i = 0; i < blockDim.x; i++)
-      {
-        if(i == sid)
-          continue;
+      // Skip my particle
+      if(i*blockDim.x + j == gid)
+        continue;
 
-        localforces[sid] = force(localparticles[i], localparticles[sid], coefficient);
-        
-      }
-      __syncthreads();
-      localvelocities[sid].x = (1 - damping) * (localvelocities[sid].x + localforces[sid].x);
-      localvelocities[sid].y = (1 - damping) * (localvelocities[sid].y + localforces[sid].y);
-      localvelocities[sid].z = (1 - damping) * (localvelocities[sid].z + localforces[sid].z);
-      localparticles[sid].x += localvelocities[sid].x;
-      localparticles[sid].y += localvelocities[sid].y;
-      localparticles[sid].z += localvelocities[sid].z;
+      float3 a = force(localparticles[j], my_position, coefficient);
+      my_acceleration.x += a.x;
+      my_acceleration.y += a.y;
+      my_acceleration.z += a.z;
     }
-  }
 
-  // Wait until all threads have finished the simulation
-  __syncthreads();
+    // Wait until all threads have calculated my acceleration
+    __syncthreads();
 
-  // Copy the shared memory back to the block
-  if(gid < num_particles)
-  {
-    particles[gid].x = localparticles[sid].x;
-    particles[gid].y = localparticles[sid].y;
-    particles[gid].z = localparticles[sid].z;
-    velocities[gid].x = localvelocities[sid].x;
-    velocities[gid].y = localvelocities[sid].y;
-    velocities[gid].z = localvelocities[sid].z;
   }
+  
+  // Now all blocks have been accounted for and my acceleration due to all of the
+  // other particles is now known.
+    __syncthreads();
+  velocities[gid].x = (1 - damping) * (velocities[gid].x + my_acceleration.x);
+  velocities[gid].y = (1 - damping) * (velocities[gid].y + my_acceleration.y);
+  velocities[gid].z = (1 - damping) * (velocities[gid].z + my_acceleration.z);
+  particles[gid].x += velocities[gid].x;
+  particles[gid].y += velocities[gid].y;
+  particles[gid].z += velocities[gid].z;
 }
 
 void writeParticles(float3 *particles, float3 *velocities, int num_particles, int iteration_number)
@@ -132,10 +121,10 @@ void writeParticles(float3 *particles, float3 *velocities, int num_particles, in
 
 int main(void)
 {
-  const int num_particles = 512;
+  const int num_particles = 2048;
   const float coefficient = 0.001;
-  const float damping = 0.005;
-  const int num_iterations = 4000;
+  const float damping = 0.01;
+  const int num_iterations = 16000;
   const int iterations_per_write = 20;
   float3 *particles;
   float3 *velocities;
@@ -171,10 +160,17 @@ int main(void)
   cudaDeviceSynchronize();
   cout << "Data written" << endl;
 
+  int blockSize;
+  err = cudaDeviceGetAttribute(&blockSize, cudaDevAttrMaxBlockDimX, 0);
+  if(err != cudaSuccess) {
+    cerr << "Failed to query GPU: " << cudaGetErrorString(err) << endl;
+    return 1;
+  }
+  
   // Run kernel on the GPU
-  int blockSize = 512;
+//  int blockSize = 512;
   int numBlocks = (num_particles + blockSize - 1) / blockSize;
-  int sharedMemSize = 3*(num_particles / numBlocks) * sizeof(float3);
+  int sharedMemSize = (num_particles / numBlocks) * sizeof(float3);
   cout << "Requesting " << sharedMemSize << " bytes" << endl;
   cout << "blockSize: " << blockSize << endl;
   cout << "numBlocks: " << numBlocks << endl;
