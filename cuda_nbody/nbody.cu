@@ -65,46 +65,50 @@ __global__ void iterate(const int num_particles, const int num_iterations, const
   // Get the index in the global data
   int gid = blockIdx.x * blockDim.x + threadIdx.x;
 
-  my_position = particles[gid];
-  my_acceleration = {0, 0, 0};
-
-  // Copy the global memory to the shared memory of the block
-  int num_blocks = (num_particles + blockDim.x - 1) / blockDim.x;
-  for(int i = 0; i < num_blocks; i++)
+  // Do a few iterations before returning to the host
+  for(int j = 0; j < num_iterations; j++)
   {
-    // Load the i-th tile into shared memory for all the blocks
-    localparticles[sid] = particles[sid + i*blockDim.x];
-    
-    // Wait until all threads have copied the data
-    __syncthreads();
+    my_position = particles[gid];
+    my_acceleration = {0, 0, 0};
 
-    // Calculate the force on my particle from all the other particles in the i-th block
-    for(int j = 0; j < blockDim.x; j++)
+    // Copy the global memory to the shared memory of the block
+    int num_blocks = (num_particles + blockDim.x - 1) / blockDim.x;
+    for(int i = 0; i < num_blocks; i++)
     {
-      // Skip my particle
-      if(i*blockDim.x + j == gid)
-        continue;
+      // Load the i-th tile into shared memory for all the blocks
+      localparticles[sid] = particles[sid + i*blockDim.x];
+      
+      // Wait until all threads have copied the data
+      __syncthreads();
 
-      float3 a = force(localparticles[j], my_position, coefficient);
-      my_acceleration.x += a.x;
-      my_acceleration.y += a.y;
-      my_acceleration.z += a.z;
+      // Calculate the force on my particle from all the other particles in the i-th block
+      for(int j = 0; j < blockDim.x; j++)
+      {
+        // Skip my particle
+        if(i*blockDim.x + j == gid)
+          continue;
+
+        float3 a = force(localparticles[j], my_position, coefficient);
+        my_acceleration.x += a.x;
+        my_acceleration.y += a.y;
+        my_acceleration.z += a.z;
+      }
+
+      // Wait until all threads have calculated my acceleration
+      __syncthreads();
+
     }
-
-    // Wait until all threads have calculated my acceleration
-    __syncthreads();
-
+    
+    // Now all blocks have been accounted for and my acceleration due to all of the
+    // other particles is now known.
+      __syncthreads();
+    velocities[gid].x = (1 - damping) * (velocities[gid].x + my_acceleration.x);
+    velocities[gid].y = (1 - damping) * (velocities[gid].y + my_acceleration.y);
+    velocities[gid].z = (1 - damping) * (velocities[gid].z + my_acceleration.z);
+    particles[gid].x += velocities[gid].x;
+    particles[gid].y += velocities[gid].y;
+    particles[gid].z += velocities[gid].z;
   }
-  
-  // Now all blocks have been accounted for and my acceleration due to all of the
-  // other particles is now known.
-    __syncthreads();
-  velocities[gid].x = (1 - damping) * (velocities[gid].x + my_acceleration.x);
-  velocities[gid].y = (1 - damping) * (velocities[gid].y + my_acceleration.y);
-  velocities[gid].z = (1 - damping) * (velocities[gid].z + my_acceleration.z);
-  particles[gid].x += velocities[gid].x;
-  particles[gid].y += velocities[gid].y;
-  particles[gid].z += velocities[gid].z;
 }
 
 void writeParticles(float3 *particles, float3 *velocities, int num_particles, int iteration_number)
