@@ -57,6 +57,7 @@ __global__ void iterate(const int num_particles, const int num_iterations, const
   extern __shared__ float3 localparticles[];
 
   float3 my_position;
+  float3 my_velocity;
   float3 my_acceleration;
 
   // Get the index in the shared data
@@ -92,23 +93,24 @@ __global__ void iterate(const int num_particles, const int num_iterations, const
         my_acceleration.x += a.x;
         my_acceleration.y += a.y;
         my_acceleration.z += a.z;
+
+        // Wait until all threads have calculated my acceleration
+        __syncthreads();
       }
 
-      // Wait until all threads have calculated my acceleration
-      __syncthreads();
-
+      // Now all blocks have been accounted for and my acceleration due to all of the
+      // other particles is now known.
+        __syncthreads();
+      my_velocity.x = (1 - damping) * (velocities[gid].x + my_acceleration.x);
+      my_velocity.y = (1 - damping) * (velocities[gid].y + my_acceleration.y);
+      my_velocity.z = (1 - damping) * (velocities[gid].z + my_acceleration.z);
+      particles[gid].x += my_velocity.x;
+      particles[gid].y += my_velocity.y;
+      particles[gid].z += my_velocity.z;
     }
-    
-    // Now all blocks have been accounted for and my acceleration due to all of the
-    // other particles is now known.
-      __syncthreads();
-    velocities[gid].x = (1 - damping) * (velocities[gid].x + my_acceleration.x);
-    velocities[gid].y = (1 - damping) * (velocities[gid].y + my_acceleration.y);
-    velocities[gid].z = (1 - damping) * (velocities[gid].z + my_acceleration.z);
-    particles[gid].x += velocities[gid].x;
-    particles[gid].y += velocities[gid].y;
-    particles[gid].z += velocities[gid].z;
   }
+
+  velocities[gid] = my_velocity;
 }
 
 void writeParticles(float3 *particles, float3 *velocities, int num_particles, int iteration_number)
