@@ -4,7 +4,7 @@
 
 using namespace std;
 
-static const char kernel_add[] =
+static const char kernel_add_program[] =
   "void kernel add(global const float *A, global const float *B, global float *C)\n"
   "{\n"
   "  C[get_global_id(0)] = A[get_global_id(0)] + B[get_global_id(0)];\n"
@@ -35,7 +35,7 @@ int main() {
 
   // Load and compile kernel
   cl::Program::Sources sources;
-  sources.push_back({kernel_add, strlen(kernel_add)});
+  sources.push_back({kernel_add_program, strlen(kernel_add_program)});
   cl::Program program(context, sources);
   if(program.build() != CL_SUCCESS) {
     vector<cl::Device> devices = context.getInfo<CL_CONTEXT_DEVICES>();
