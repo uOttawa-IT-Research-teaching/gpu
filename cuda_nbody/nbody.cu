@@ -94,13 +94,12 @@ __global__ void iterate(const int num_particles, const int num_iterations, const
         my_acceleration.y += a.y;
         my_acceleration.z += a.z;
 
-        // Wait until all threads have calculated my acceleration
-        __syncthreads();
       }
+      // Wait until all threads have calculated my acceleration
+      __syncthreads();
 
       // Now all blocks have been accounted for and my acceleration due to all of the
       // other particles is now known.
-        __syncthreads();
       my_velocity.x = (1 - damping) * (velocities[gid].x + my_acceleration.x);
       my_velocity.y = (1 - damping) * (velocities[gid].y + my_acceleration.y);
       my_velocity.z = (1 - damping) * (velocities[gid].z + my_acceleration.z);
