@@ -1,6 +1,6 @@
 #include <iostream>
 #include <vector>
-#include <CL/cl.hpp>
+#include <CL/opencl.hpp>
 
 using namespace std;
 
